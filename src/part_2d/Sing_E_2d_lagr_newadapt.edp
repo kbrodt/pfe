@@ -1,0 +1,222 @@
+load "Element_Mixte"
+
+int N = 5; // number of elements on the border
+
+real delta = 7.3475; //71.385;// constant in the diagonal domains
+string base = "RT0_P1";
+bool adapt = 1;
+string adap = "";
+if(adapt) adap = "_newadapt";
+ofstream report("Report_Sing_E_"+base+"_lagr"+adap+".txt");
+
+real x1 = (delta - 1)/(delta + 1);
+real l = 2/pi*acos(x1);
+real x2 = cos(l*pi);
+real y1 = sin(l*pi/2);
+real y2 = sin(l*pi);
+
+real c0 = 0.7071;
+real s0 = -(1+x1)/y1*c0;
+real c1 = (y1-y2)/y1*c0;
+real s1 = (x2-x1)/y1*c0;
+real c2 = (y1+y2)/y1*c0;
+real s2 = (x1+x2)/y1*c0;
+real c3 = c0;
+real s3 = (x1-1)/y1*c0;
+
+cout << "D :\t" << delta << "\n";
+cout << "Lambda :\t" << l << "\n";
+
+/*
+cout << c0 << endl;
+cout << s0 << endl;
+cout << c1 << endl;
+cout << s1 << endl;
+cout << c2 << endl;
+cout << s2 << endl;
+cout << c3 << endl;
+cout << s3 << endl;
+*/
+
+int Nmax = 6; // 6 uniforme P1; 4 uniforme P2
+real[int] L2ErrorE(Nmax);
+real[int] L2ErrorRotE(Nmax);
+real[int] L2RelErrorE(Nmax);
+real[int] L2RelErrorRotE(Nmax);
+real[int] HRotErrorE(Nmax);
+real[int] HRotRelErrorE(Nmax);
+real L2NormE;
+real L2NormRotPhi;
+real HRotNormPhi;
+
+real[int] L2ErrorPhiE(Nmax);
+real[int] RelErrorPhiE(Nmax);
+
+int[int] ntv(Nmax);
+int[int] nv(Nmax);
+real[int] hv(Nmax);
+int[int] nx(Nmax);
+real[int] alpha(Nmax);
+
+real[int] timeE(Nmax);
+
+// cout << "NORM OF GRAD PHI: " << sqrt(pi/4*l*2^(l)*((c0^2+s0^2)+(c1^2+s1^2)+(c2^2+s2^2)+(c3^2+s3^2))) << endl;
+
+// definition of the mesh of Omega
+// 0 - label of dOmega
+
+real w =0.5;
+
+border w00(t=0,w){x=t; y=0; label=2;};
+border w01(t=0,w){x=w; y=t; label=0;};
+border w02(t=w,0){x=t; y=w; label=0;};
+border w03(t=w,0){x=0; y=t; label=2;};
+
+border w10(t=0,w){x=t-w; y=0; label=1;};
+border w11(t=0,w){x=0; y=t; label=2;};
+border w12(t=w,0){x=t-w; y=w; label=0;};
+border w13(t=w,0){x=-w; y=t; label=0;};
+
+border w20(t=0,w){x=t-w; y=-w; label=0;};
+border w21(t=0,w){x=0; y=t-w; label=2;};
+border w22(t=w,0){x=t-w; y=0; label=1;};
+border w23(t=w,0){x=-w; y=t-w; label=0;};
+
+border w30(t=0,w){x=t; y=-w; label=0;};
+border w31(t=0,w){x=w; y=t-w; label=0;};
+border w32(t=w,0){x=t; y=0; label=2;};
+border w33(t=w,0){x=0; y=t-w; label=2;};
+
+mesh Th = buildmesh(w00(N)+w01(N)+w02(N)+w03(N)+w10(N)+w12(N)+w13(N)+w20(N)+w21(N)+w23(N)+w30(N)+w31(N));
+
+// definition of the finite space P0 for piecewie functions
+
+fespace Ph(Th,P0);
+Ph reg = region; // to make out the sub-domains
+
+int reg0 = reg(0.1, 0.1); // label of Omega0
+int reg1 = reg(-0.1, 0.1);
+int reg2 = reg(-0.1, -0.1);
+int reg3 = reg(0.1, -0.1);
+
+func r=sqrt(x^2 + y^2); // radial coordinate
+func q=atan2(y,x); // q in ]-Pi, Pi]; // angle coordinate
+
+func Delta = (region==reg0) + delta * (region==reg1) + (region==reg2) + delta * (region==reg3); // Delta function in whole Omega
+
+func E0x = l*r^(l-1)*(sin(q*(l-1))*c0 - cos(q*(l-1))*s0);
+func E0y = l*r^(l-1)*(cos(q*(l-1))*c0 + sin(q*(l-1))*s0);
+func E1x = delta*l*r^(l-1)*(sin(q*(l-1))*c1 - cos(q*(l-1))*s1);
+func E1y = delta*l*r^(l-1)*(cos(q*(l-1))*c1 + sin(q*(l-1))*s1);
+func E2x = l*r^(l-1)*(sin(q*(l-1))*c2-cos(q*(l-1))*s2);
+func E2y = l*r^(l-1)*(cos(q*(l-1))*c2 + sin(q*(l-1))*s2);
+func E3x = delta*l*r^(l-1)*(sin(q*(l-1))*c3 - cos(q*(l-1))*s3);
+func E3y = delta*l*r^(l-1)*(cos(q*(l-1))*c3 + sin(q*(l-1))*s3);
+func Ex = E0x*(region==reg0) + E1x*(region==reg1) + E2x*(region==reg2) + E3x*(region==reg3);
+func Ey = E0y*(region==reg0) + E1y*(region==reg1) + E2y*(region==reg2) + E3y*(region==reg3);
+
+macro grad(u) [dx(u), dy(u)] //
+macro div(u,v) (dx(u) + dy(v)) //
+macro rot(u) [-dy(u), dx(u)] //
+macro Rot(u,v) (dx(v) - dy(u)) //
+
+report << "D :\t" << delta << "\n";
+report << "Lambda :\t" << l << "\n" << "\n";
+
+real error = 0.1;
+
+for(int i=0; i<Nmax; i++){
+
+	if(i!=0) Th = buildmesh(w00(2^i*N)+w01(2^i*N)+w02(2^i*N)+w03(2^i*N)+w10(2^i*N)+w12(2^i*N)+w13(2^i*N)+w20(2^i*N)+w21(2^i*N)+w23(2^i*N)+w30(2^i*N)+w31(2^i*N));
+	//plot(Th,wait=1);
+
+	//plot(reg, fill=1,value=1, wait=1);
+
+	//Ph intDelta = Delta;
+	//plot(intDelta, fill=1,value=1, wait=1); // plot the Delta function
+
+	// definition of the finite space P...
+
+	fespace Vh(Th,P1);
+	
+	fespace Xh(Th,RT0Ortho);
+	
+	Xh [Ehx, Ehy], [vx, vy];
+	Vh p, pp;
+
+	real cpuE = clock();
+	solve singularElagr([Ehx,Ehy,p],[vx,vy,pp],solver=UMFPACK) = 
+		 int2d(Th)( Rot(Ehx,Ehy)*Rot(vx,vy) )
+		+int2d(Th)( Delta^(-1)*[vx,vy]'*grad(p) )
+		+int2d(Th)( Delta^(-1)*[Ehx,Ehy]'*grad(pp) )
+		+on(0, Ehx = Ex, Ehy = Ey, p=0);
+	timeE[i] = clock() - cpuE;
+	plot(Th, wait=1);
+	
+	if(adapt){
+		Th = adaptmesh(Th,[Ehx,Ehy],err=error);
+		//error=error/2;
+		plot(Th, wait=1);
+		cpuE = clock();
+		singularElagr;
+		timeE[i] = clock() - cpuE;
+	}
+	
+	Vh Hv = hTriangle;
+	hv[i] = Hv[].max;
+	nv[i] = Vh.ndof;
+	ntv[i] = Th.nt;
+	nx[i] = Xh.ndof;
+
+	
+	Xh [intEx, intEy] = [Ex ,Ey];
+	plot([intEx, intEy],wait=1, value=1,fill=1);
+	plot([Ehx, Ehy], wait=1,value=1,fill=1);
+
+	L2NormE = sqrt(  int2d(Th)( [Ex, Ey]'*[Ex, Ey]) );
+	L2ErrorE[i] = sqrt( int2d(Th)( ( (Ex - Ehx)^2 + (Ey - Ehy)^2) ) );
+	L2RelErrorE[i] = L2ErrorE[i]/L2NormE;
+
+	L2ErrorRotE[i] = sqrt( int2d(Th)(Rot(Ehx,Ehy)*Rot(Ehx,Ehy)) );
+	
+	HRotRelErrorE[i] = sqrt(L2ErrorE[i]^2+L2ErrorRotE[i]^2)/L2NormE;
+
+	report << "DoF (nx,nv) :\t" << nx[i]+nv[i] << "\t(" << nx[i] << ", " << nv[i] << ")" << "\n";
+	if(adapt) report <<"Radius (hmin, hmax) :\t" << "(" << Hv[].min << ", " << Hv[].max << ")" << "\n";
+	else report << "Radius (hv) :\t" << hv[i] << "\n";
+	report << "CPU (s) :\t" << timeE[i] << "\n";
+	report << "L2 Norm (E) :\t" << L2NormE << "\n";
+	report << "L2 Error (E - Eh) :\t"  << L2ErrorE[i] << "\n";
+	report << "L2 Rel Error (E - Eh) :\t" << L2RelErrorE[i] << "\n";
+	report << "L2 Error (Rot(E - Eh)) :\t"  << L2ErrorRotE[i] << "\n";
+	report << "HRot Rel Error (E - Eh) :\t"  << HRotRelErrorE[i] << "\n";
+
+	if((i>0)&&(!adapt)){
+		report << "Convergence rate for E in L2 :\t"<< log(L2RelErrorE[i-1]/L2RelErrorE[i])/log(2.) << "\n";
+	}
+	report << "-------------------------------------" << "\n";
+}
+
+cout << "Convergence rate for E in L2 :\t"<< log(L2RelErrorE[Nmax-2]/L2RelErrorE[Nmax-1])/log(2.) << "\n";
+
+real koef = 1; // 1 : UNIFORME || 3.3 (P1 RT0); 5.3 (P2 RT1) : ADAPT
+if(adapt)
+	if(base=="RT0_P1") koef=3.3; //
+	else koef=5.3;
+real kL2E = koef*l; // adapt P2 RT1
+kL2E = koef*0.13; // adapt P2 RT1
+cout << "kL2E :\t" << kL2E << "\n";
+real[int] xx(Nmax);
+real[int] yyL2E(Nmax);
+real[int] ppL2E(Nmax);
+for(int i=0; i<Nmax; i++){
+    xx[i] = (ntv[i])^(-1./2.); // 2d 
+	yyL2E[i] = (L2RelErrorE[i]);
+	ppL2E[i] = -(kL2E*xx[i]-kL2E*xx[0]-yyL2E[0]); // adapt -0.7
+}
+
+ofstream ff("Data_Error_Sing_E_"+base+"_lagr"+adap+".txt");
+ff << "h\tL2E\tpL2E\tdof\t\cpu\n";
+for(int i=0; i<Nmax; i++){
+    ff << xx[i] <<  "\t" << yyL2E[i] << "\t" << ppL2E[i] << "\t" << nx[i]+nv[i] << "\t" << timeE[i] << "\n";
+}

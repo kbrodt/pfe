@@ -1,0 +1,57 @@
+func mesh3 Cube(int N,real a){
+	real hs = a/N;
+	real voltet=(hs^3)/6.;
+	cout<<"PAS H :\t"<<hs<<"\n";
+	cout<<"VOLUME V :\t"<<voltet<<"\n";
+	
+	border sq0(t=0,a) {x=t; y=0; label=1;};
+	border sq1(t=0,a) {x=a; y=t; label=1;};
+	border sq2(t=0,a) {x=a-t; y=a; label=1;};
+	border sq3(t=0,a) {x=0; y=a-t; label=1;};
+
+	mesh side = buildmesh( sq0(N) + sq1(N) + sq2(N) + sq3(N));
+	//int nnn=side(0,0.25).region; // label = 0
+	//cout << "LABEL :\t" << nnn << "\n";
+
+	int[int] refInner=[0,2];
+	int[int] refZd=[0,3];
+	int[int] refZu=[0,3];
+	mesh3 front0 = movemesh23(side,transfo=[a,x,y]);
+	mesh3 right0 = movemesh23(side,transfo=[x,a,y]);
+	mesh3 back0 = movemesh23(side,transfo=[0,x,y],label=refInner);
+	mesh3 left0 = movemesh23(side,transfo=[x,0,y],label=refInner);
+	mesh3 down0 = movemesh23(side,transfo=[x,y,0],label=refZd);
+	mesh3 up0 = movemesh23(side,transfo=[x,y,a],label=refZu);
+
+	int[int] refInt=[0,1];
+	mesh3 right1 = movemesh23(side,transfo=[x-a,a,y]);
+	mesh3 back1 = movemesh23(side,transfo=[-a,x,y]);
+	mesh3 left1 = movemesh23(side,transfo=[x-a,0,y],label=refInt);
+	mesh3 down1 = movemesh23(side,transfo=[x-a,y,0],label=refZd);
+	mesh3 up1 = movemesh23(side,transfo=[x-a,y,a],label=refZu);
+
+	mesh3 front2 = movemesh23(side,transfo=[0,x-a,y],label=refInner);
+	mesh3 back2 = movemesh23(side,transfo=[-a,x-a,y]);
+	mesh3 left2 = movemesh23(side,transfo=[x-a,-a,y]);
+	mesh3 down2 = movemesh23(side,transfo=[x-a,y-a,0],label=refZd);
+	mesh3 up2 = movemesh23(side,transfo=[x-a,y-a,a],label=refZu);
+
+	mesh3 front3 = movemesh23(side,transfo=[a,x-a,y]);
+	mesh3 left3 = movemesh23(side,transfo=[x,-a,y]);
+	mesh3 down3 = movemesh23(side,transfo=[x,y-a,0],label=refZd);
+	mesh3 up3 = movemesh23(side,transfo=[x,y-a,a],label=refZu);
+
+	mesh3 Th0=front0+right0+back0+left0+down0+up0
+		+right1+back1+left1+down1+up1
+		+front2+back2+left2+down2+up2
+		+front3+left3+down3+up3;
+
+	//plot(Th0,wait=1);
+
+	real[int] domain =[a/2,a/2,a/2,1,voltet,
+								-a/2,a/2,a/2,2,voltet,
+								-a/2,-a/2,a/2,3,voltet,
+								a/2,-a/2,a/2,4,voltet];
+	mesh3 Th = tetg(Th0, switch="pqaAAYYQ",regionlist=domain);// discretisation de la salle et du rack
+	return Th;
+}

@@ -1,0 +1,251 @@
+load "UMFPACK64"
+
+int N = 5; // number of elements on the border
+
+real delta =  71.385;// 7.3475; //constant in the diagonal domains
+real x1 = (delta - 1)/(delta + 1);
+real l = 2/pi*acos(x1);
+
+string base = "P1";
+bool adapt = 1;
+string adap = "";
+if(adapt) adap = "_newadapt";
+ofstream report("Report_Sing_Phi_"+base+adap+".txt");
+
+real x2 = cos(l*pi);
+real y1 = sin(l*pi/2);
+real y2 = sin(l*pi);
+
+real c0 = 0.7071;
+real s0 = -(1+x1)/y1*c0;
+real c1 = (y1-y2)/y1*c0;
+real s1 = (x2-x1)/y1*c0;
+real c2 = (y1+y2)/y1*c0;
+real s2 = (x1+x2)/y1*c0;
+real c3 = c0;
+real s3 = (x1-1)/y1*c0;
+
+cout << "D :\t" << delta << "\n";
+cout << "Lambda :\t" << l << "\n";
+
+/*
+cout << c0 << endl;
+cout << s0 << endl;
+cout << c1 << endl;
+cout << s1 << endl;
+cout << c2 << endl;
+cout << s2 << endl;
+cout << c3 << endl;
+cout << s3 << endl;
+*/
+
+int Nmax = 6; // 6 uniforme P1; 4 uniforme P2
+real[int] L2ErrorPhi(Nmax);
+real[int] L2ErrorGradPhi(Nmax);
+real[int] L2RelErrorPhi(Nmax);
+real[int] L2RelErrorGradPhi(Nmax);
+real[int] H1ErrorPhi(Nmax);
+real[int] H1RelErrorPhi(Nmax);
+real L2NormPhi;
+real L2NormGradPhi;
+real H1NormPhi;
+
+real[int] L2ErrorE(Nmax);
+real[int] L2RelErrorE(Nmax);
+real L2NormE;
+
+int[int] ntv(Nmax);
+int[int] nv(Nmax);
+real[int] hv(Nmax);
+
+// definition of the mesh of Omega
+// 0 - label of dOmega
+
+real w =0.5;
+
+border w00(t=0,w){x=t; y=0; label=2;};
+border w01(t=0,w){x=w; y=t; label=0;};
+border w02(t=w,0){x=t; y=w; label=0;};
+border w03(t=w,0){x=0; y=t; label=2;};
+
+border w10(t=0,w){x=t-w; y=0; label=1;};
+border w11(t=0,w){x=0; y=t; label=2;};
+border w12(t=w,0){x=t-w; y=w; label=0;};
+border w13(t=w,0){x=-w; y=t; label=0;};
+
+border w20(t=0,w){x=t-w; y=-w; label=0;};
+border w21(t=0,w){x=0; y=t-w; label=2;};
+border w22(t=w,0){x=t-w; y=0; label=1;};
+border w23(t=w,0){x=-w; y=t-w; label=0;};
+
+border w30(t=0,w){x=t; y=-w; label=0;};
+border w31(t=0,w){x=w; y=t-w; label=0;};
+border w32(t=w,0){x=t; y=0; label=2;};
+border w33(t=w,0){x=0; y=t-w; label=2;};
+
+mesh Th = buildmesh(w00(N)+w01(N)+w02(N)+w03(N)+w10(N)+w12(N)+w13(N)+w20(N)+w21(N)+w23(N)+w30(N)+w31(N));
+
+// definition of the finite space P0 for piecewie functions
+
+fespace Ph(Th,P0);
+Ph reg = region; // to make out the sub-domains
+int reg0 = reg(0.1, 0.1); // label of Omega0
+int reg1 = reg(-0.1, 0.1);
+int reg2 = reg(-0.1, -0.1);
+int reg3 = reg(0.1, -0.1);
+
+func r=sqrt(x^2 + y^2); // radial coordinate
+func q=atan2(y,x); // q in ]-Pi, Pi]; // angle coordinate
+
+func Delta = (region==reg0) + delta * (region==reg1) + (region==reg2) + delta * (region==reg3); // Delta function in whole Omega
+
+func Phi0 = r^l*(c0*cos(l*q)+s0*sin(l*q)); // Phi0 in Omega0
+func Phi1 = r^l*(c1*cos(l*q)+s1*sin(l*q));
+func Phi2 = r^l*(c2*cos(l*q)+s2*sin(l*q));
+func Phi3 = r^l*(c3*cos(l*q)+s3*sin(l*q));
+func Phi = Phi0*(region==reg0) + Phi1*(region==reg1) + Phi2*(region==reg2) + Phi3*(region==reg3); // Phi in whole Omega
+
+func GradPhi0x = l*r^(l-1)*(c0*cos(q*(l-1))+s0*sin(q*(l-1)));
+func GradPhi0y = l*r^(l-1)*(-c0*sin(q*(l-1))+s0*cos((l-1)*q));
+func GradPhi1x = l*r^(l-1)*(c1*cos(q*(l-1))+s1*sin(q*(l-1)));
+func GradPhi1y = l*r^(l-1)*(-c1*sin(q*(l-1))+s1*cos((l-1)*q));
+func GradPhi2x = l*r^(l-1)*(c2*cos(q*(l-1))+s2*sin(q*(l-1)));
+func GradPhi2y = l*r^(l-1)*(-c2*sin(q*(l-1))+s2*cos((l-1)*q));
+func GradPhi3x = l*r^(l-1)*(c3*cos(q*(l-1))+s3*sin(q*(l-1)));
+func GradPhi3y = l*r^(l-1)*(-c3*sin(q*(l-1))+s3*cos((l-1)*q));
+func GradPhix = GradPhi0x*(region==reg0) + GradPhi1x*(region==reg1) + GradPhi2x*(region==reg2) + GradPhi3x*(region==reg3);
+func GradPhiy = GradPhi0y*(region==reg0) + GradPhi1y*(region==reg1) + GradPhi2y*(region==reg2) + GradPhi3y*(region==reg3);
+
+macro grad(u) [dx(u), dy(u)] //
+macro div(u,v) (dx(u) + dy(v)) //
+macro rot(u) [-dy(u), dx(u)] //
+macro Rot(u,v) (dx(v) - dy(u)) //
+
+report << "D :\t" << delta << "\n";
+report << "Lambda :\t" << l << "\n" << "\n";
+
+real error=0.1;
+
+for(int i=0; i<Nmax; i++){
+
+	if(i!=0) Th = buildmesh(w00(2^i*N)+w01(2^i*N)+w02(2^i*N)+w03(2^i*N)+w10(2^i*N)+w12(2^i*N)+w13(2^i*N)+w20(2^i*N)+w21(2^i*N)+w23(2^i*N)+w30(2^i*N)+w31(2^i*N));
+	plot(Th,wait=1);
+
+	//plot(reg, fill=1,value=1, wait=1);
+
+	//Ph intDelta = Delta;
+	//plot(intDelta, fill=1,value=1, wait=1); // plot the Delta function
+
+	// definition of the finite space P...
+
+	fespace Vh(Th,P1);
+	Vh Phih, phih;
+
+	// definition of the macros of operators grad, div, etc...
+	
+	real cpuPhi = clock();
+	solve singularPhi(Phih, phih, solver=sparsesolver) = 
+		int2d(Th)(Delta * grad(Phih)' * grad(phih))
+		+on(0, Phih = Phi);
+	real timePhi = clock() - cpuPhi;
+
+	if(adapt){
+		Th = adaptmesh(Th,Phih,err=error);
+		//error=error/2;
+		plot(Th,wait=1);
+		cpuPhi = clock();
+		singularPhi;
+		timePhi = clock() - cpuPhi;
+	}
+
+	Vh Hv = hTriangle;
+	hv[i] = Hv[].max;
+	nv[i] = Vh.ndof;
+	ntv[i] = Th.nt;
+	
+	Vh GradPhihx = dx(Phih);
+	Vh GradPhihy = dy(Phih);
+	Vh RotPhihx = -dy(Phih);
+	Vh RotPhihy = dx(Phih);
+	
+
+	Vh intPhi = Phi;
+	plot(intPhi,wait=1,value=1,fill=1);
+	plot(Phih,wait=1,value=1,fill=1);
+
+	L2NormPhi = sqrt(  int2d(Th)( Phi*Phi) );
+	L2ErrorPhi[i] = sqrt( int2d(Th)( (Phi-Phih)^2 ) );
+	L2RelErrorPhi[i] = L2ErrorPhi[i]/L2NormPhi;
+
+	L2NormGradPhi = sqrt( int2d(Th)( (GradPhix^2 + GradPhiy^2))) ; // if we first interpolate and then itagrate we have +inf
+	L2ErrorGradPhi[i] = sqrt( int2d(Th)( ( (GradPhix - GradPhihx)^2 + (GradPhiy - GradPhihy)^2 ) ) );
+	L2RelErrorGradPhi[i] = L2ErrorGradPhi[i]/L2NormGradPhi;
+
+	H1RelErrorPhi[i] = sqrt(L2ErrorPhi[i]^2 + L2ErrorGradPhi[i]^2)/sqrt(L2NormPhi^2+L2NormGradPhi^2);
+
+	report << "Number of triangles (nt) :\t" << ntv[i] << "\n";
+	report << "DoF (nv) :\t" << nv[i] << "\n";
+	if(adapt) report <<"Radius (hmin, hmax) :\t" << "(" << Hv[].min << ", " << Hv[].max << ")" << "\n";
+	else report << "Radius (hv) :\t" << hv[i] << "\n";
+	report << "CPU (s) :\t" << timePhi << "\n";
+	report << "L2 Norm (Phi) :\t" << L2NormPhi << "\n";
+	report << "L2 Error (Phi - Phih) :\t"  << L2ErrorPhi[i] << "\n";
+	report << "L2 Rel Error (Phi - Phih) :\t" << L2RelErrorPhi[i] << "\n";
+	report << "L2 Norm (Grad(Phi)) :\t" << L2NormGradPhi << "\n";
+	report << "L2 Error (Grad(Phi - Phih)) :\t"  << L2ErrorGradPhi[i] << "\n";
+	report << "L2 Rel Error (Grad(Phi - Phih)) :\t" <<  L2RelErrorGradPhi[i] << "\n";
+	report << "H1 Rel Error (Phi - Phih) :\t" <<  H1RelErrorPhi[i] << "\n" << "\n";
+
+	L2NormE = sqrt( int2d(Th)( Delta^2*(GradPhix^2 + GradPhiy^2))) ; // if we first interpolate and then itagrate we have +inf
+	L2ErrorE[i] = sqrt( int2d(Th)( Delta^2*( (GradPhix - GradPhihx)^2 + (GradPhiy - GradPhihy)^2 ) ) );
+	L2RelErrorE[i] = L2ErrorE[i]/L2NormE;
+	
+	report << "L2 Norm (E) :\t" << L2NormE << "\n";
+	report << "L2 Error (E - Eh) :\t"  << L2ErrorE[i] << "\n";
+	report << "L2 Rel Error (E - Eh) :\t" << L2RelErrorE[i] << "\n";
+
+	if((i>0)&&(!adapt)){
+	report << "Convergence rate for Phi in L2 :\t"<< log(L2RelErrorPhi[i-1]/L2RelErrorPhi[i])/log(2.) << "\n";
+	report << "Convergence rate for Phi in H1 :\t"<< log(H1RelErrorPhi[i-1]/H1RelErrorPhi[i])/log(2.) << "\n";
+	report << "Convergence rate for E in L2 :\t"<< log(L2RelErrorE[i-1]/L2RelErrorE[i])/log(2.) << "\n";
+	}
+	report << "-------------------------------------" << "\n" << "\n";
+}
+
+cout << "Convergence rate for Phi in L2 :\t"<< log(L2RelErrorPhi[Nmax-2]/L2RelErrorPhi[Nmax-1])/log(2.) << "\n";
+cout << "Convergence rate for Phi in H1 :\t"<< log(H1RelErrorPhi[Nmax-2]/H1RelErrorPhi[Nmax-1])/log(2.) << "\n";
+cout << "Convergence rate for E in L2 :\t"<< log(L2RelErrorE[Nmax-2]/L2RelErrorE[Nmax-1])/log(2.) << "\n";
+
+real koef = 1; // 1 : UNIFORME || 3.3 (P1 RT0); 5.3 (P2 RT1) : ADAPT
+if(adapt) koef=3.3;
+real kL2Phi = koef*2*l;
+if(base=="P1") kL2Phi += 0.05; // lambda = 0.15
+if(base=="P2") kL2Phi += 0.04; // lambda = 0.15
+real kH1Phi = koef*0.14; // 0.4 lambda=0.45
+//real kL2E = koef*l; // adapt P2 RT1
+real kL2E = koef*0.18; // 0.4 lambda=0.45
+cout << "kL2Phi :\t" << kL2Phi << "\n";
+cout << "kH1Phi :\t" << kH1Phi << "\n";
+cout << "kL2E :\t" << kL2E << "\n";
+real[int] xx(Nmax);
+real[int] yyL2Phi(Nmax);
+real[int] yyH1Phi(Nmax);
+real[int] yyL2E(Nmax);
+real[int] ppL2Phi(Nmax);
+real[int] ppH1Phi(Nmax);
+real[int] ppL2E(Nmax);
+for(int i=0; i<Nmax; i++){
+    xx[i] = (ntv[i])^(-1./2.); // 2d 
+    yyL2Phi[i] = (L2RelErrorPhi[i]);
+	yyH1Phi[i] = (H1RelErrorPhi[i]);
+	yyL2E[i] = (L2RelErrorE[i]);
+	ppL2Phi[i] = -(kL2Phi*xx[i]-kL2Phi*xx[0]-yyL2Phi[0]); // adapt for P2 RT1 -1.45
+	ppH1Phi[i] = -(kH1Phi*xx[i]-kH1Phi*xx[0]-yyH1Phi[0]); // adapt -0.65
+	ppL2E[i] = -(kL2E*xx[i]-kL2E*xx[0]-yyL2E[0]); // adapt -0.7
+}
+
+ofstream ff("Data_Error_Sing_Phi_"+base+adap+".txt");
+ff << "h\tL2Phi\tH1Phi\tL2E\tpL2Phi\tpH1Phi\tpL2E\n";
+for(int i=0; i<Nmax; i++){
+    ff << xx[i] << "\t" << yyL2Phi[i] << "\t" << yyH1Phi[i] << "\t" << yyL2E[i] << "\t" << ppL2Phi[i] << "\t" << ppH1Phi[i] << "\t" << ppL2E[i] << "\n";
+}

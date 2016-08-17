@@ -1,0 +1,296 @@
+load "msh3"
+load "medit"
+load "tetgen"
+include "mesh_cube.idp"
+load "Element_Mixte3d"
+load "UMFPACK64"
+
+defaulttoUMFPACK64();
+
+
+int N=3; // dof per edge
+real a = 0.5; // dimensions of cube
+
+real delta = 647.78901;//71.385;//7.3475; // constant in the diagonal domains
+string base = "Edge03d_P13d";
+bool adapt = 0;
+string adap = "";
+if(adapt) adap = "_adapt";
+ofstream report("Report_Sing3d_E_"+base+"_lagr"+adap+".txt");
+
+real x1 = (delta - 1)/(delta + 1);
+real l = 2/pi*acos(x1);
+real x2 = cos(l*pi);
+real y1 = sin(l*pi/2);
+real y2 = sin(l*pi);
+
+real c0 = 0.7071;
+real s0 = -(1+x1)/y1*c0;
+real c1 = (y1-y2)/y1*c0;
+real s1 = (x2-x1)/y1*c0;
+real c2 = (y1+y2)/y1*c0;
+real s2 = (x1+x2)/y1*c0;
+real c3 = c0;
+real s3 = (x1-1)/y1*c0;
+
+int Nmax =2; // 5 uniforme P1; 3 uniforme P2
+real[int] L2ErrorE(Nmax);
+real[int] L2ErrorRotE(Nmax);
+real[int] L2RelErrorE(Nmax);
+real[int] L2RelErrorRotE(Nmax);
+real[int] HRotErrorE(Nmax);
+real[int] HRotRelErrorE(Nmax);
+real L2NormE;
+real L2NormRotE;
+real L2NormRotPhi;
+real HRotNormPhi;
+
+real[int] L2ErrorPhiE(Nmax);
+real[int] RelErrorPhiE(Nmax);
+
+int[int] ntv(Nmax);
+int[int] nv(Nmax);
+real[int] hv(Nmax);
+int[int] nx(Nmax);
+//real[int] alpha(Nmax);
+int[int] nnz(Nmax);
+real[int] timeE(Nmax);
+real[int] timeECon(Nmax);
+real[int] timeESol(Nmax);
+
+// solve 3d problem
+
+mesh3 Th = Cube(N,a);
+
+//plot (Th,cmm="Room 3D  ",wait=1);
+//medit("Th",Th);
+
+fespace Ph(Th,P03d);     // P1 FE space
+// Ph reg=region;
+
+// //plot(reg,wait=1);
+// //medit("reg",Th,reg);
+
+// cout << "Om0 :\t" << reg(0.25,0.25,0.25) <<"\n"; 
+// cout << "Om1 :\t" << reg(-0.25,0.25,0.25) <<"\n"; 
+// cout << "Om2 :\t" << reg(-0.25,-0.25,0.25) <<"\n"; 
+// cout << "Om3 :\t" << reg(0.25,-0.25,0.25) <<"\n"; 
+
+// int reg0 = reg(0.25,0.25,0.25);
+// int reg1 = reg(-0.25,0.25,0.25);
+// int reg2 = reg(-0.25,-0.25,0.25);
+// int reg3 = reg(0.25,-0.25,0.25);
+
+func r=sqrt(x^2 + y^2); // radial coordinate
+func q=atan2(y,x); // q in ]-Pi, Pi]; // angle coordinate
+
+func om1 = (r>=0)*(q>0)*(q<=pi/2);
+func om2 = (r>=0)*(q>pi/2)*(q<=pi);
+func om3 = (r>=0)*(q>-pi)*(q<=-pi/2);
+func om4 = (r>=0)*(q>-pi/2)*(q<=0);
+
+func Delta = om1 + delta*om2 + om3+ delta*om4; // Delta function in whole Omega
+
+
+func f = sin(2*pi/a*z);
+func df = (2*pi/a)*cos(2*pi/a*z);
+real eta=0;
+
+func Phi0 = r^l*(c0*cos(l*q)+s0*sin(l*q)); // Phi0 in Omega0
+func Phi1 = r^l*(c1*cos(l*q)+s1*sin(l*q));
+func Phi2 = r^l*(c2*cos(l*q)+s2*sin(l*q));
+func Phi3 = r^l*(c3*cos(l*q)+s3*sin(l*q));
+func Phi = Phi0*om1 + Phi1*om2 + Phi2*om3 + Phi3*om4; // Phi in whole Omega
+
+func GradPhi0x = l*r^(l-1)*(c0*cos(q*(l-1))+s0*sin(q*(l-1)));
+func GradPhi0y = l*r^(l-1)*(-c0*sin(q*(l-1))+s0*cos((l-1)*q));
+func GradPhi1x = l*r^(l-1)*(c1*cos(q*(l-1))+s1*sin(q*(l-1)));
+func GradPhi1y = l*r^(l-1)*(-c1*sin(q*(l-1))+s1*cos((l-1)*q));
+func GradPhi2x = l*r^(l-1)*(c2*cos(q*(l-1))+s2*sin(q*(l-1)));
+func GradPhi2y = l*r^(l-1)*(-c2*sin(q*(l-1))+s2*cos((l-1)*q));
+func GradPhi3x = l*r^(l-1)*(c3*cos(q*(l-1))+s3*sin(q*(l-1)));
+func GradPhi3y = l*r^(l-1)*(-c3*sin(q*(l-1))+s3*cos((l-1)*q));
+
+func g = -(2*pi/a)^2*Delta*Phi*f;
+
+func Ex0 = l*r^(l-1)*(cos(q*(l-1))*c0 + sin(q*(l-1))*s0)*f;//GradPhi0y;//
+func Ey0 = l*r^(l-1)*(-sin(q*(l-1))*c0 + cos(q*(l-1))*s0)*f;//-GradPhi0x;
+func Ez0 = df*Phi0;
+func Ex1 = l*r^(l-1)*(cos(q*(l-1))*c1 + sin(q*(l-1))*s1)*f;//GradPhi1y;//
+func Ey1 = l*r^(l-1)*(-sin(q*(l-1))*c1 + cos(q*(l-1))*s1)*f;//-GradPhi1x;//
+func Ez1 = df*Phi1;
+func Ex2 = l*r^(l-1)*(cos(q*(l-1))*c2 + sin(q*(l-1))*s2)*f;//GradPhi2y;//
+func Ey2 = l*r^(l-1)*(-sin(q*(l-1))*c2 + cos(q*(l-1))*s2)*f;//-GradPhi2x;//
+func Ez2 = df*Phi2;
+func Ex3 = l*r^(l-1)*(cos(q*(l-1))*c3 + sin(q*(l-1))*s3)*f;//GradPhi3y;//
+func Ey3 = l*r^(l-1)*(-sin(q*(l-1))*c3 + cos(q*(l-1))*s3)*f;//-GradPhi3x;//
+func Ez3 = df*Phi3;
+func Ex = Ex0*om1 + Ex1*om2 + Ex2*om3 + Ex3*om4;
+func Ey = Ey0*om1 + Ey1*om2 + Ey2*om3 + Ey3*om4;
+func Ez = df*Phi;//Ez0*om1 + Ez1*om2 + Ez2*om3 + Ez3*om4;
+
+func fx = -eta^2*Ex;
+func fy = -eta^2*Ey;
+func fz = -eta^2*Ez;
+
+func rotEx = 0;//-Ey*(2*pi/a)/tan(2*pi/a*z);
+func rotEy = 0;//Ex*(2*pi/a)/tan(2*pi/a*z);
+func rotEz = 0;
+
+//macros pour mes gradient et rotationnel
+
+macro grad(u) [dx(u), dy(u), dz(u)] //
+macro rot(u,v,w) [dy(w)-dz(v), dz(u)-dx(w), dx(v)-dy(u)] //
+macro div(u,v,w) (dx(u) + dy(v) + dz(w)) //
+macro div2d(u,v) (dx(u) + dy(v)) //
+
+report << "D :\t" << delta << "\n";
+report << "Lambda :\t" << l << "\n" << "\n";
+
+
+for(int i=0; i<Nmax; i++){
+	if(i!=0){
+		Th = Cube((i+1)*N,a);
+	}
+	//medit("Th",Th);
+
+	// definition of the finite space P...
+
+	fespace Vh(Th,P13d);
+
+	// definition of the macros of operators grad, div, etc...
+	
+	Vh Hv = hTriangle;
+	hv[i] = Hv[].min;
+	nv[i] = Vh.ndof;
+	ntv[i] = Th.nt;
+	
+	//alpha[i] = hv[i]^(2*l);
+	cout << "WAG :\t"<<hv[i] <<"\n";
+	//alpha[i] = hv[i]^(l);
+	//cout <<"ALFA :\t"<< alpha[i] <<"\n";
+	
+	fespace Xh(Th,[Edge03d,P13d]);     // Nedelec FE space
+
+	nx[i] = Xh.ndof;
+
+	Xh [Ehx,Ehy,Ehz,p], [vx,vy,vz,pp]; // unkown and test function.
+	//Vh p, pp;
+	
+	
+	varf a([Ehx,Ehy,Ehz,p],[vx,vy,vz,pp]) = 
+		 //int3d(Th)( alpha[i]*Delta^(-1)*[Ehx,Ehy,Ehz]'*[vx,vy,vz] )
+		int3d(Th)( rot(Ehx,Ehy,Ehz)'*rot(vx,vy,vz) )
+		//-int3d(Th)( eta^2*[Ehx,Ehy,Ehz]'*[vx,vy,vz] )
+		+int3d(Th)( Delta^(1)*[vx,vy,vz]'*grad(p) )
+		+int3d(Th)( Delta^(1)*[Ehx,Ehy,Ehz]'*grad(pp) )
+		+int3d(Th)( g*pp )
+		//-int3d(Th)( [fx,fy,fz]'*[vx,vy,vz] )
+		+on(0,3,Ehx = Ex, Ehy = Ey, Ehz=Ez, p=0);
+		//+on(4, Ehx = Ey, Ehy = Ex, Ehz=0, p=0);
+		
+	real cpuE = clock();
+	matrix A = a(Xh,Xh);
+	real[int] b = a(0,Xh);
+	timeECon[i] = clock() - cpuE;
+	//medit("g",Th,g);
+	real[int] EE(nx[i]);
+	//real[int] E(nx[i]);
+	set(A,solver=sparsesolver);
+	cpuE = clock();
+	EE = A^-1*b; // solve the linear systeme 
+	timeESol[i] = clock() - cpuE;
+	nnz[i]= A.nbcoef;
+	
+	//int sizeE = (nx[i]-nv[i])/3;
+	
+	//Ehx[] = EE(0:sizeE-1);	
+	//Ehy[] = EE(sizeE:2*sizeE-1);	
+	//Ehz[] = EE(2*sizeE:3*sizeE-1);
+	//p[] = EE(3*sizeE:nx[i]-1);
+	cpuE = clock();
+	solve singularElagr3d([Ehx,Ehy,Ehz,p],[vx,vy,vz,pp],solver=sparsesolver) = 
+		 //int3d(Th)( alpha[i]*Delta^(-1)*[Ehx,Ehy,Ehz]'*[vx,vy,vz] )
+		int3d(Th)( rot(Ehx,Ehy,Ehz)'*rot(vx,vy,vz) )
+		//-int3d(Th)( eta^2*[Ehx,Ehy,Ehz]'*[vx,vy,vz] )
+		+int3d(Th)( Delta^(1)*[vx,vy,vz]'*grad(p) )
+		+int3d(Th)( Delta^(1)*[Ehx,Ehy,Ehz]'*grad(pp) )
+		+int3d(Th)( g*pp )
+		//-int3d(Th)( [fx,fy,fz]'*[vx,vy,vz] )
+		+on(0,3,Ehx = Ex, Ehy = Ey, Ehz=Ez, p=0);
+		//+on(4, Ehx = Ey, Ehy = Ex, Ehz=0, p=0);
+	timeE[i] = clock() - cpuE;
+	
+	
+	cout <<"\n"<< "Taille =\t" << A.n << "\t, Non zeros =\t" << A.nbcoef <<"\n";
+	cout <<"\nTime of Construction =\t"<< timeECon[i] << "\n";
+	cout <<"-------------------\n";
+	
+	medit("Delta",Th,Delta);
+	medit("Phi",Th,Phi);
+	medit("g",Th,g);
+	medit("E",Th,[Ex,Ey,Ez]);
+	medit("Eh",Th,[Ehx,Ehy,Ehz]);
+	medit("rotEh",Th,rot(Ehx,Ehy,Ehz));
+	// medit("Ex",Th,Ex);
+	// medit("Ey",Th,Ey);
+	// medit("Ez",Th,Ez);
+	medit("Ehx",Th,Ehx);
+	medit("Ehy",Th,Ehy);
+	medit("Ehz",Th,Ehz);
+	medit("p",Th,p);
+	// medit("E.E",Th,[Ex, Ey, Ez]'*[Ex, Ey, Ez]);
+	// medit("Eh.Eh",Th,[Ehx, Ehy, Ehz]'*[Ehx, Ehy, Ehz]);
+	//real asd = int3d(Th)( [Ex,Ey,Ez]'*[Ex,Ey,Ez] );
+	//smedit("||E||",Th,asd);
+
+	L2NormE = sqrt(  int3d(Th)( [Ex, Ey, Ez]'*[Ex, Ey, Ez]) );
+	L2ErrorE[i] = sqrt( int3d(Th)( ( (Ex - Ehx)^2 + (Ey - Ehy)^2 + (Ez - Ehz)^2) ) );
+	L2RelErrorE[i] = L2ErrorE[i]/L2NormE;
+
+	L2NormRotE = sqrt( int3d(Th)( [rotEx, rotEy, rotEz]'*[rotEx, rotEy, rotEz] ) );
+	L2ErrorRotE[i] = sqrt( int3d(Th)( (dy(Ehz)-dz(Ehy)-rotEx)^2 + (dz(Ehx) - dx(Ehz)-rotEy)^2 + (dx(Ehy)-dy(Ehx)-rotEz)^2 ) );
+	//L2RelErrorRotE[i] = L2ErrorRotE[i]/L2NormRotE;
+	L2RelErrorRotE[i] = L2ErrorRotE[i]/L2NormE;
+	
+	HRotRelErrorE[i] = sqrt(L2ErrorE[i]^2+L2ErrorRotE[i]^2)/sqrt(L2NormE^2+L2NormRotE^2);
+
+	report << "DoF (nv) :\t" << nx[i] << "\t("<<nv[i]<<")"<<"\n";
+	if(adapt) report <<"Radius (hmin, hmax) :\t" << "(" << Hv[].min << ", " << Hv[].max << ")" << "\n";
+	else report << "Radius (hv) :\t" << hv[i] << "\n";
+	report << "Taille " << A.n <<  "\n";
+	report << "Non zeros " << nnz[i] <<  "\n";
+	report << "CPU (s) :\t" << timeE[i] << "\n";
+	report << "CPU Contruction (s) :\t" << timeECon[i] << "\n";
+	report << "CPU Resolution (s) :\t" << timeESol[i] << "\n";
+	report << "L2 Norm (E) :\t" << L2NormE << "\n";
+	report << "L2 Error (E - Eh) :\t"  << L2ErrorE[i] << "\n";
+	report << "L2 Rel Error (E - Eh) :\t" << L2RelErrorE[i] << "\n";
+	report << "L2 Norm Rot(E) :\t" << L2NormRotE << "\n";
+	report << "L2 Error (Rot(E - Eh)) :\t"  << L2ErrorRotE[i] << "\n";
+	report << "L2 Rel Error Rot(E - Eh) :\t" << L2RelErrorRotE[i] << "\n";
+	report << "HRot Rel Error (E - Eh) :\t"  << HRotRelErrorE[i] << "\n";
+
+	if((i>0)&&(!adapt)){
+		report << "Convergence rate for E in L2 :\t"<< log(L2RelErrorE[i-1]/L2RelErrorE[i])/log(2.) << "\n";
+	}
+	report << "-------------------------------------" << "\n";
+}
+
+real[int] xx(Nmax);
+real[int] yyL2E(Nmax);
+real[int] yyL2RotE(Nmax);
+real[int] yyHRotE(Nmax);
+
+for(int i=0; i<Nmax; i++){
+    xx[i] = (ntv[i])^(-1./3.); // 3d 
+	yyL2E[i] = (L2RelErrorE[i]);
+	yyL2RotE[i] = (L2RelErrorRotE[i]);
+	yyHRotE[i] = (HRotRelErrorE[i]);
+}
+
+ofstream ff("Data_Error_Sing3d_E_"+base+"_lagr"+adap+".txt");
+ff << "h\tL2E\tL2RotE\tHRotE\t\tdof\t\cpu\tnnz\tcpusol\n";
+for(int i=0; i<Nmax; i++){
+    ff << xx[i] << "\t" << yyL2E[i] << "\t"  << yyL2RotE[i] << "\t" << yyHRotE[i] <<"\t"<<nx[i]+nv[i]<<"\t"<<timeE[i] << "\t"<<nnz[i]<<"\t"<<timeESol[i]<<"\n";
+}
